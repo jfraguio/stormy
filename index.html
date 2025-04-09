@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Stormy - Evaporación y Burbuja Mejorada</title>
+  <title>Stormy - Cortina de Lluvia, Evaporación y Burbuja Mejorada</title>
   <style>
     html, body {
       margin: 0;
@@ -21,14 +21,9 @@
   <script>
     // ======================= CONFIGURACIÓN AJUSTABLE =========================
     // Modifica estos valores según tus preferencias:
-    
-    // Para la burbuja: incrementa este valor para que la burbuja envuelva completamente la nube.
-    const BUBBLE_EXTRA_RADIUS = 35;
-    
-    // Factor para la aparición de nubes negras:
-    // Valor menor a 1 aumenta la frecuencia; mayor a 1 la reduce.
-    const ENEMY_SPAWN_INTERVAL_FACTOR = 0.7;
-    
+    const BUBBLE_EXTRA_RADIUS = 35;  // Tamaño extra para la burbuja que envuelve a la nube blanca.
+    const ENEMY_SPAWN_INTERVAL_FACTOR = 0.7; // Factor para la frecuencia de aparición de nubes negras.
+
     // ======================= CONFIGURACIÓN DEL JUEGO =========================
     const PROTAGONISTA_SPEED = 4;                // Velocidad normal de la nube blanca (jugador)
     const SPEED_RATIO = 1.3;                     // Relación para la velocidad de enemigos
@@ -36,7 +31,6 @@
     const PROTAGONISTA_RADIUS = 16;              // Radio de la nube blanca
     const ENEMY_RADIUS = 16;                     // Radio para nubes negras
     const BIRD_COLLISION_RADIUS = 15;            // Radio de colisión entre la nube blanca y los pájaros
-    const ENEMY_FADE_DURATION = 1000;            // (No se utiliza ya que se usa evaporación unificada)
     const BASE_ENEMY_INTERVAL = 10000;           // Intervalo base para nubes negras (ms)
     const BIRD_SPAWN_INTERVAL = 5000;            // Intervalo para aparición de pájaros (ms)
     const RAINBOW_DURATION = 3000;               // Duración de aparición del arcoíris (ms)
@@ -44,27 +38,26 @@
     const RAINBOW_FADE_DURATION = 500;           // Duración del fade-in del arcoíris (ms)
 
     // Configuración de la tormenta:
-    let currentStormThreshold = 400;         
-    const LIGHTNING_INTERVAL = 3000;         
-    const LIGHTNING_DURATION = 300;          
-    const GIANT_SPAWN_INTERVAL = 10000;      
+    let currentStormThreshold = 400;
+    const LIGHTNING_INTERVAL = 3000;
+    const LIGHTNING_DURATION = 300;
+    const GIANT_SPAWN_INTERVAL = 10000;
     const GIANT_MULTIPLIER = 3.5;                // Escala para nubes gigantes
-    let giantCloudKills = 0;                     // Contador de nubes gigantes eliminadas
+    let giantCloudKills = 0;
 
-    // Transición de la tormenta:
+    // Transición de tormenta:
     let stormTransitionStart = null;
     let stormEndingTransitionStart = null;
-    let stormState = "none";                   // "none", "active" o "ending"
-    let inStorm = false;                       // true cuando está en tormenta
+    let stormState = "none";       // "none", "active" o "ending"
+    let inStorm = false;           // true si estamos en modo tormenta
 
     // Efecto atardecer:
-    // Al tocar un pájaro rojo se activa un degradado y se dibuja un sol; al tocar el sol, se elimina (evapora) a las nubes negras.
-    let sunsetEffect = null;   // { startTime, fadeInDuration, fullDuration, fadeOutDuration, sunX, sunY, sunRadius, triggered }
+    // Al tocar un pájaro rojo se activa un degradado y se dibuja un sol;
+    // al colisionar con la cortina de lluvia, se aplica el poder: si el protagonista tiene burbuja o arcoíris, la nube se elimina; en caso contrario, el protagonista muere.
+    let sunsetEffect = null; // { startTime, fadeInDuration, fullDuration, fadeOutDuration, sunX, sunY, sunRadius, triggered }
 
     // ======================= EFECTO DE EVAPORACIÓN (PARTÍCULAS) ====================
-    // Array para almacenar partículas de evaporación
     let evaporationParticles = [];
-    // Crea partículas de evaporación en la posición (x, y) con un tamaño basado en 'radius'
     function spawnEvaporationEffect(x, y, radius) {
       const particleCount = 20;
       for (let i = 0; i < particleCount; i++) {
@@ -77,11 +70,10 @@
           vy: Math.sin(angle) * speed,
           radius: radius * (Math.random() * 0.3 + 0.2),
           startTime: performance.now(),
-          lifetime: 1000 + Math.random() * 400  // Entre 1000 y 1400 ms
+          lifetime: 1000 + Math.random() * 400
         });
       }
     }
-    // Dibuja y actualiza las partículas de evaporación
     function drawEvaporationParticles(currentTime) {
       for (let i = evaporationParticles.length - 1; i >= 0; i--) {
         let p = evaporationParticles[i];
@@ -91,7 +83,6 @@
           continue;
         }
         let alpha = 1 - (elapsed / p.lifetime);
-        // Actualiza la posición de la partícula (en este ejemplo se usa una actualización simple)
         p.x += p.vx;
         p.y += p.vy;
         ctx.save();
@@ -104,13 +95,19 @@
       }
     }
 
-    // ======================= OTRAS VARIABLES Y ARRAYS ====================
-    let smokeEffects = [];  // (no se usa para eliminación: ahora se usa evaporación unificada)
+    // ======================= OTRAS VARIABLES =========================
     const MOBILE_COLLISION_MULTIPLIER = 0.8;
     const SCORE_ZONE = { x: 10, y: 10, width: 140, height: 30 };
     const IS_MOBILE = ('ontouchstart' in window);
 
-    // ========================= CONFIGURACIÓN DEL CANVAS ========================
+    // ======================= CONFIGURACIÓN PARA DASH (SLIDE) =======================
+    const DASH_THRESHOLD = 300;    // Tiempo para detectar doble input en la misma dirección (ms)
+    const DASH_DURATION = 150;     // Duración del dash (ms)
+    const DASH_DISTANCE = 5 * (PROTAGONISTA_RADIUS * 2); // Distancia del dash (5 diámetros)
+    let lastInputDirection = null;
+    let lastInputTime = 0;
+
+    // ======================= CONFIGURACIÓN DEL CANVAS =======================
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     function resizeCanvas() {
@@ -120,14 +117,7 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // ========================= CONFIGURACIÓN PARA DASH (SLIDE) ==================
-    const DASH_THRESHOLD = 300;    // Tiempo (ms) para detectar doble input en la misma dirección
-    const DASH_DURATION = 150;     // Duración del dash (ms)
-    const DASH_DISTANCE = 5 * (PROTAGONISTA_RADIUS * 2); // Distancia: 5 diámetros de la nube
-    let lastInputDirection = null; // { x, y } o null
-    let lastInputTime = 0;
-
-    // =========================== VARIABLES DEL JUEGO ============================
+    // ======================= VARIABLES DEL JUEGO =======================
     let score = 0;
     let lastTime = performance.now();
     let isPaused = true;
@@ -139,7 +129,7 @@
     let lightningBolts = [];
     let birdSpawner;
 
-    // =========================== ENTIDADES DEL JUEGO ============================
+    // ======================= ENTIDADES DEL JUEGO =======================
     let protagonista = {
       x: canvas.width / 2,
       y: canvas.height / 2,
@@ -148,7 +138,6 @@
       rainbow: false,
       rainbowUntil: 0,
       bubble: false,
-      // Propiedades para el dash:
       isDashing: false,
       dashRemainingTime: 0,
       dashVelX: 0,
@@ -158,7 +147,7 @@
     let birds = [];
     let rainbowEntity = null;
 
-    // =========================== FUNCIONES DE COLISIÓN ===========================
+    // ======================= FUNCIONES DE COLISIÓN =======================
     function getProtagonistCircles(prot) {
       return [
         { x: prot.x - PROTAGONISTA_RADIUS, y: prot.y - PROTAGONISTA_RADIUS, r: PROTAGONISTA_RADIUS },
@@ -176,6 +165,14 @@
         { x: baseX + enemy.radius, y: baseY - enemy.radius, r: enemy.radius },
         { x: baseX, y: baseY, r: enemy.radius }
       ];
+    }
+    // Colisión entre círculo y rectángulo
+    function isCircleRectColliding(circle, circleRadius, rect) {
+      let nearestX = Math.max(rect.x, Math.min(circle.x, rect.x + rect.width));
+      let nearestY = Math.max(rect.y, Math.min(circle.y, rect.y + rect.height));
+      let dx = circle.x - nearestX;
+      let dy = circle.y - nearestY;
+      return (dx * dx + dy * dy) < (circleRadius * circleRadius);
     }
     function isPreciseCloudCollision(prot, enemy) {
       const protCircles = getProtagonistCircles(prot);
@@ -217,7 +214,7 @@
       return (diffX * diffX + diffY * diffY) < (circleRadius * circleRadius);
     }
 
-    // =========================== ELEMENTOS DE FONDO ============================
+    // ======================= ELEMENTOS DE FONDO =======================
     let backgroundClouds = [];
     let backgroundParticles = [];
     let backgroundLeaves = [];
@@ -252,7 +249,7 @@
     }
     initBackground();
 
-    // =========================== GESTIÓN DEL JUEGO ============================
+    // ======================= GESTIÓN DEL JUEGO =======================
     function resetGame() {
       isGameOver = false;
       isPaused = true;
@@ -308,7 +305,13 @@
       angle += (Math.random() - 0.5) * 0.4;
       let vx = Math.cos(angle) * ENEMY_SPEED;
       let vy = Math.sin(angle) * ENEMY_SPEED;
-      enemies.push({ x: x, y: y, vx: vx, vy: vy, radius: ENEMY_RADIUS, giant: false });
+      let enemy = { x: x, y: y, vx: vx, vy: vy, radius: ENEMY_RADIUS, giant: false };
+      // Probabilidad del 20% de tener cortina de lluvia.
+      enemy.rainCurtain = (Math.random() < 0.2);
+      if (enemy.rainCurtain) {
+        enemy.radius *= 2; // La nube con lluvia es el doble de grande.
+      }
+      enemies.push(enemy);
     }
     function spawnGiantEnemy() {
       let side = Math.floor(Math.random() * 4);
@@ -331,10 +334,15 @@
       angle += (Math.random() - 0.5) * 0.4;
       let vx = Math.cos(angle) * ENEMY_SPEED;
       let vy = Math.sin(angle) * ENEMY_SPEED;
-      enemies.push({ x: x, y: y, vx: vx, vy: vy, radius: giantRadius, giant: true });
+      let enemy = { x: x, y: y, vx: vx, vy: vy, radius: giantRadius, giant: true };
+      enemy.rainCurtain = (Math.random() < 0.2);
+      if (enemy.rainCurtain) {
+        enemy.radius *= 2;
+      }
+      enemies.push(enemy);
     }
     // ======================= GESTIÓN DE LOS PÁJAROS =======================
-    // Se crean tres tipos: normal (50% → otorga burbuja), arcoíris (30% → produce efecto arcoíris) y rojo (20% → atardecer).
+    // Tres tipos: normal (50% → otorga burbuja), arcoíris (30% → efecto arcoíris) y rojo (20% → atardecer).
     function spawnBird() {
       const x = -30;
       const y = Math.random() * canvas.height;
@@ -361,7 +369,7 @@
       if (obj.y < -radius) obj.y = canvas.height + radius;
       if (obj.y > canvas.height + radius) obj.y = -radius;
     }
-    // Actualiza la posición del protagonista considerando el dash (si está activo)
+    // Actualiza la posición del protagonista considerando el dash.
     function updateProtagonistPosition(dt, dtFactor) {
       if (protagonista.isDashing) {
         protagonista.x += protagonista.dashVelX * dt;
@@ -378,8 +386,28 @@
         updatePosition(protagonista, PROTAGONISTA_RADIUS, dtFactor);
       }
     }
-
-    // =========================== DIBUJO ===========================
+    // Dibuja la cortina de lluvia: 4 líneas discontinuas, centradas horizontalmente debajo de la nube.
+    function drawRainCurtain(enemy, currentTime) {
+      const totalWidth = 3 * enemy.radius;
+      const centerX = enemy.x;
+      const startX = centerX - (totalWidth / 2);
+      const lineCount = 4;
+      ctx.save();
+      ctx.setLineDash([4, 4]);  // Líneas discontinuas
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 1;
+      const startY = enemy.y + enemy.radius;
+      for (let i = 0; i < lineCount; i++) {
+        let lineX = startX + (i + 0.5) * (totalWidth / lineCount);
+        let offset = (currentTime / 50) % 10;
+        ctx.beginPath();
+        ctx.moveTo(lineX, startY + offset);
+        ctx.lineTo(lineX, canvas.height);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // ======================= DIBUJO =======================
     function drawBackground(currentTime) {
       backgroundClouds.forEach(cloud => {
         ctx.save();
@@ -587,7 +615,7 @@
         ctx.fillRect(x + eyeOffsetX - eyeRadius, y - eyeOffsetY - eyeRadius/2, eyeRadius*2, eyeRadius);
         ctx.restore();
       }
-      // Dibujo de la burbuja: se eleva el centro restándole 10 píxeles al eje Y.
+      // Dibujar la burbuja elevada (se resta 10 al eje Y)
       if (protagonista.bubble) {
         ctx.save();
         ctx.lineWidth = 4;
@@ -604,7 +632,7 @@
     function drawScore() {
       ctx.fillStyle = "black";
       ctx.font = "20px Arial";
-      ctx.fillText("Puntuación: " + Math.floor(score), SCORE_ZONE.x, SCORE_ZONE.y + 20);
+      ctx.fillText("Score: " + Math.floor(score), SCORE_ZONE.x, SCORE_ZONE.y + 20);
     }
     function drawLightning(bolt) {
       let t = performance.now();
@@ -660,10 +688,31 @@
       ctx.stroke();
       ctx.restore();
     }
-
-    // ================== CONTROLES: DASH (TECLADO Y TOUCH) ==================
+    // ======================= DIBUJO DE LA CORTINA DE LLUVIA =======================
+    function drawRainCurtain(enemy, currentTime) {
+      const totalWidth = 3 * enemy.radius;
+      const centerX = enemy.x;
+      const startX = centerX - (totalWidth / 2);
+      const lineCount = 4; // Ahora 4 líneas centradas
+      ctx.save();
+      ctx.setLineDash([4, 4]);  // Líneas discontinuas
+      ctx.strokeStyle = "white";
+      ctx.lineWidth = 1;
+      const startY = enemy.y + enemy.radius;
+      for (let i = 0; i < lineCount; i++) {
+        let lineX = startX + (i + 0.5) * (totalWidth / lineCount);
+        let offset = (currentTime / 50) % 10;
+        ctx.beginPath();
+        ctx.moveTo(lineX, startY + offset);
+        ctx.lineTo(lineX, canvas.height);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
+    // ======================= CONTROLES =======================
     document.addEventListener('keydown', function(e) {
-      if (!gameStarted && (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      if (!gameStarted && (e.key === "ArrowUp" || e.key === "ArrowDown" ||
+          e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         gameStarted = true;
         isPaused = false;
       }
@@ -686,14 +735,12 @@
               lastInputDirection.y === direction.y &&
               (now - lastInputTime) < DASH_THRESHOLD &&
               !protagonista.isDashing) {
-            // Activar dash
             protagonista.isDashing = true;
             protagonista.dashRemainingTime = DASH_DURATION;
-            const dashVelocity = DASH_DISTANCE / DASH_DURATION; // px por ms
+            const dashVelocity = DASH_DISTANCE / DASH_DURATION;
             protagonista.dashVelX = direction.x * dashVelocity;
             protagonista.dashVelY = direction.y * dashVelocity;
           } else {
-            // Movimiento normal
             protagonista.vx = direction.x * PROTAGONISTA_SPEED;
             protagonista.vy = direction.y * PROTAGONISTA_SPEED;
           }
@@ -771,7 +818,7 @@
       }
     });
 
-    // =========================== PAUSA Y REINICIO ===========================
+    // ======================= PAUSA Y REINICIO =======================
     function togglePause() {
       if (isGameOver) {
         resetGame();
@@ -786,7 +833,7 @@
       }
     }
 
-    // =========================== BUCLE PRINCIPAL DEL JUEGO ===========================
+    // ======================= BUCLE PRINCIPAL DEL JUEGO =======================
     function gameLoop(currentTime) {
       let dt = currentTime - lastTime;
       let dtFactor = dt / 16.67;
@@ -808,13 +855,12 @@
           sunsetEffect = null;
         }
       }
-      // Al colisionar con el sol durante el atardecer, eliminar (evaporar) todas las nubes.
       if (sunsetEffect) {
         let dx = protagonista.x - sunsetEffect.sunX;
         let dy = protagonista.y - sunsetEffect.sunY;
         if (Math.hypot(dx, dy) < PROTAGONISTA_RADIUS + sunsetEffect.sunRadius) {
           if (!sunsetEffect.triggered) {
-            while(enemies.length > 0) {
+            while (enemies.length > 0) {
               let enemy = enemies.shift();
               spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
             }
@@ -841,8 +887,7 @@
             birds.splice(i, 1);
           }
         }
-        let enemyInterval = (BASE_ENEMY_INTERVAL * ENEMY_SPAWN_INTERVAL_FACTOR)
-                            - Math.floor(score / 100) * 1000;
+        let enemyInterval = (BASE_ENEMY_INTERVAL * ENEMY_SPAWN_INTERVAL_FACTOR) - Math.floor(score / 100) * 1000;
         enemyInterval = Math.max(200, enemyInterval);
         enemySpawnAccumulator += dt;
         if (enemySpawnAccumulator >= enemyInterval) {
@@ -879,13 +924,40 @@
       drawBackground(currentTime);
       drawProtagonist(currentTime);
       
-      // Procesar colisiones con nubes negras: si la nube blanca (con poder) colisiona,
-      // se elimina la nube usando el mismo efecto de evaporación.
+      // Procesar nubes negras y su cortina de lluvia
       for (let i = enemies.length - 1; i >= 0; i--) {
         let enemy = enemies[i];
         drawCloud(enemy.x - enemy.radius, enemy.y - enemy.radius, enemy.radius, "black");
         if (enemy.giant) {
           drawAngryFace(enemy.x, enemy.y, enemy.radius);
+        }
+        // Si la nube tiene cortina de lluvia, dibujar la cortina
+        if (enemy.rainCurtain) {
+          drawRainCurtain(enemy, currentTime);
+          const rect = {
+            x: enemy.x - enemy.radius,
+            y: enemy.y + enemy.radius,
+            width: 3 * enemy.radius,
+            height: canvas.height - (enemy.y + enemy.radius)
+          };
+          if (isCircleRectColliding(protagonista, PROTAGONISTA_RADIUS, rect)) {
+            if (protagonista.rainbow || protagonista.bubble) {
+              spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
+              if (enemy.giant) {
+                giantCloudKills++;
+                let requiredKills = (currentStormThreshold === 800) ? 6 : 3;
+                if (giantCloudKills >= requiredKills) {
+                  beginStormEnding(currentTime);
+                }
+              }
+              if (protagonista.bubble) {
+                protagonista.bubble = false;
+              }
+              enemies.splice(i, 1);
+            } else {
+              isGameOver = true;
+            }
+          }
         }
         if (!isPaused && !isGameOver && isPreciseCloudCollision(protagonista, enemy)) {
           if (protagonista.rainbow || protagonista.bubble) {
@@ -907,6 +979,7 @@
         }
       }
       
+      // Procesar pájaros
       for (let i = birds.length - 1; i >= 0; i--) {
         let bird = birds[i];
         drawBird(bird, currentTime);
@@ -962,6 +1035,7 @@
         }
       }
       
+      drawEvaporationParticles(currentTime);
       drawScore();
       if (isGameOver) {
         ctx.fillStyle = "rgba(0,0,0,0.5)";
