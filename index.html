@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Stormy</title>
+  <title>Stormy - Evaporación y Burbuja Mejorada</title>
   <style>
     html, body {
       margin: 0;
       padding: 0;
       overflow: hidden;
-      background: #87CEEB; /* Fondo por defecto: azul claro */
+      background: #87CEEB; /* Fondo azul claro */
     }
     canvas {
       display: block;
@@ -19,61 +19,98 @@
 <body>
   <canvas id="gameCanvas"></canvas>
   <script>
+    // ======================= CONFIGURACIÓN AJUSTABLE =========================
+    // Modifica estos valores según tus preferencias:
+    
+    // Para la burbuja: incrementa este valor para que la burbuja envuelva completamente la nube.
+    const BUBBLE_EXTRA_RADIUS = 35;
+    
+    // Factor para la aparición de nubes negras:
+    // Valor menor a 1 aumenta la frecuencia; mayor a 1 la reduce.
+    const ENEMY_SPAWN_INTERVAL_FACTOR = 0.7;
+    
     // ======================= CONFIGURACIÓN DEL JUEGO =========================
-    // Velocidades y tamaños:
-    const PROTAGONISTA_SPEED = 4;            // Velocidad de la nube blanca (movimiento del jugador)
-    const SPEED_RATIO = 1.3;                 // Relación para calcular la velocidad de los enemigos
-    const ENEMY_SPEED = PROTAGONISTA_SPEED / SPEED_RATIO; // Velocidad de las nubes negras
-    const PROTAGONISTA_RADIUS = 16;          // Radio para el cálculo de colisión de la nube blanca
-    const ENEMY_RADIUS = 16;                 // Radio para nubes negras normales
-    const BIRD_COLLISION_RADIUS = 15;        // Radio para colisión entre la nube blanca y los pájaros
-
-    // Intervalos y tiempos (en milisegundos):
-    const BASE_ENEMY_INTERVAL = 10000;       // Intervalo base para aparición de nubes negras (10 s)
-    const BIRD_SPAWN_INTERVAL = 5000;        // Intervalo para aparición de pájaros (5 s)
-    const RAINBOW_DURATION = 3000;           // Tiempo total de aparición del arcoíris (3 s)
-    const RAINBOW_MODE_DURATION = 5000;      // Duración del poder rainbow (5 s)
-    const RAINBOW_FADE_DURATION = 500;       // Duración del efecto fade-in del arcoíris
+    const PROTAGONISTA_SPEED = 4;                // Velocidad normal de la nube blanca (jugador)
+    const SPEED_RATIO = 1.3;                     // Relación para la velocidad de enemigos
+    const ENEMY_SPEED = PROTAGONISTA_SPEED / SPEED_RATIO;
+    const PROTAGONISTA_RADIUS = 16;              // Radio de la nube blanca
+    const ENEMY_RADIUS = 16;                     // Radio para nubes negras
+    const BIRD_COLLISION_RADIUS = 15;            // Radio de colisión entre la nube blanca y los pájaros
+    const ENEMY_FADE_DURATION = 1000;            // (No se utiliza ya que se usa evaporación unificada)
+    const BASE_ENEMY_INTERVAL = 10000;           // Intervalo base para nubes negras (ms)
+    const BIRD_SPAWN_INTERVAL = 5000;            // Intervalo para aparición de pájaros (ms)
+    const RAINBOW_DURATION = 3000;               // Duración de aparición del arcoíris (ms)
+    const RAINBOW_MODE_DURATION = 5000;          // Duración del poder arcoíris (ms)
+    const RAINBOW_FADE_DURATION = 500;           // Duración del fade-in del arcoíris (ms)
 
     // Configuración de la tormenta:
-    // La primera tormenta se activa a 400 puntos; una vez finalizada, la siguiente llegará al alcanzar 800 puntos.
-    let currentStormThreshold = 400;         // Umbral para activar la tormenta
-    const LIGHTNING_INTERVAL = 3000;         // Intervalo entre aparición de rayos
-    const LIGHTNING_DURATION = 300;          // Duración de cada rayo (300 ms)
-    const GIANT_SPAWN_INTERVAL = 10000;        // Intervalo para aparición de nubes gigantes (10 s)
-
-    // Nubes gigantes:
-    const GIANT_MULTIPLIER = 3.5;            // Factor de escala para nubes gigantes (70% del tamaño anterior)
-    let giantCloudKills = 0;                 // Contador de nubes gigantes eliminadas
-    // Se requerirán 3 kills en la primera tormenta y 6 en la siguiente.
+    let currentStormThreshold = 400;         
+    const LIGHTNING_INTERVAL = 3000;         
+    const LIGHTNING_DURATION = 300;          
+    const GIANT_SPAWN_INTERVAL = 10000;      
+    const GIANT_MULTIPLIER = 3.5;                // Escala para nubes gigantes
+    let giantCloudKills = 0;                     // Contador de nubes gigantes eliminadas
 
     // Transición de la tormenta:
-    // Se aplicará una superposición oscura gradual durante 5 segundos al iniciar o finalizar la tormenta.
-    let stormTransitionStart = null;         // Momento en que inicia la transición al entrar en tormenta
-    let stormEndingTransitionStart = null;     // Momento en que inicia la transición al terminar la tormenta
-    // Estado de la tormenta: "none", "active" o "ending"
-    let stormState = "none";
-    let inStorm = false;                     // true si se está en modo tormenta (incluyendo fase de finalización)
+    let stormTransitionStart = null;
+    let stormEndingTransitionStart = null;
+    let stormState = "none";                   // "none", "active" o "ending"
+    let inStorm = false;                       // true cuando está en tormenta
 
     // Efecto atardecer:
-    // Al colisionar con un pájaro rojo se activa un degradado (violeta arriba, naranja abajo) que aparece en 2 s, dura 5 s y se desvanece en 2 s.
-    // Además se dibuja un sol naranja (posición y tamaño aleatorios).
-    // Si la nube blanca toca el sol, las nubes negras se evaporan mostrando humo gris.
-    let sunsetEffect = null; // { startTime, fadeInDuration, fullDuration, fadeOutDuration, sunX, sunY, sunRadius }
+    // Al tocar un pájaro rojo se activa un degradado y se dibuja un sol; al tocar el sol, se elimina (evapora) a las nubes negras.
+    let sunsetEffect = null;   // { startTime, fadeInDuration, fullDuration, fadeOutDuration, sunX, sunY, sunRadius, triggered }
 
-    // Humo para evaporar nubes:
-    let smokeEffects = [];  // Array de efectos de humo: { x, y, radius, startTime }
+    // ======================= EFECTO DE EVAPORACIÓN (PARTÍCULAS) ====================
+    // Array para almacenar partículas de evaporación
+    let evaporationParticles = [];
+    // Crea partículas de evaporación en la posición (x, y) con un tamaño basado en 'radius'
+    function spawnEvaporationEffect(x, y, radius) {
+      const particleCount = 20;
+      for (let i = 0; i < particleCount; i++) {
+        let angle = Math.random() * 2 * Math.PI;
+        let speed = Math.random() * 1.5 + 0.5;
+        evaporationParticles.push({
+          x: x,
+          y: y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          radius: radius * (Math.random() * 0.3 + 0.2),
+          startTime: performance.now(),
+          lifetime: 1000 + Math.random() * 400  // Entre 1000 y 1400 ms
+        });
+      }
+    }
+    // Dibuja y actualiza las partículas de evaporación
+    function drawEvaporationParticles(currentTime) {
+      for (let i = evaporationParticles.length - 1; i >= 0; i--) {
+        let p = evaporationParticles[i];
+        let elapsed = currentTime - p.startTime;
+        if (elapsed >= p.lifetime) {
+          evaporationParticles.splice(i, 1);
+          continue;
+        }
+        let alpha = 1 - (elapsed / p.lifetime);
+        // Actualiza la posición de la partícula (en este ejemplo se usa una actualización simple)
+        p.x += p.vx;
+        p.y += p.vy;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "white";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
 
-    // Ajuste para colisiones en dispositivos móviles:
-    const MOBILE_COLLISION_MULTIPLIER = 0.8;   // Factor para reducir el radio efectivo de colisión en mobile
-
-    // Zona de la puntuación (para activar PAUSE en mobile)
+    // ======================= OTRAS VARIABLES Y ARRAYS ====================
+    let smokeEffects = [];  // (no se usa para eliminación: ahora se usa evaporación unificada)
+    const MOBILE_COLLISION_MULTIPLIER = 0.8;
     const SCORE_ZONE = { x: 10, y: 10, width: 140, height: 30 };
-
-    // Detección de modo mobile:
     const IS_MOBILE = ('ontouchstart' in window);
 
-    // ============================ CONFIGURACIÓN DEL CANVAS ============================
+    // ========================= CONFIGURACIÓN DEL CANVAS ========================
     const canvas = document.getElementById('gameCanvas');
     const ctx = canvas.getContext('2d');
     function resizeCanvas() {
@@ -83,40 +120,45 @@
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 
-    // ============================ VARIABLES GLOBALES DEL JUEGO ============================
+    // ========================= CONFIGURACIÓN PARA DASH (SLIDE) ==================
+    const DASH_THRESHOLD = 300;    // Tiempo (ms) para detectar doble input en la misma dirección
+    const DASH_DURATION = 150;     // Duración del dash (ms)
+    const DASH_DISTANCE = 5 * (PROTAGONISTA_RADIUS * 2); // Distancia: 5 diámetros de la nube
+    let lastInputDirection = null; // { x, y } o null
+    let lastInputTime = 0;
+
+    // =========================== VARIABLES DEL JUEGO ============================
     let score = 0;
     let lastTime = performance.now();
-    let isPaused = true;   // AL INICIO, el juego está parado.
+    let isPaused = true;
     let isGameOver = false;
-    let gameStarted = false; // Indica si se ha iniciado la partida
-
-    // Acumuladores para spawns:
+    let gameStarted = false;
     let enemySpawnAccumulator = 0;
     let lightningAccumulator = 0;
     let giantEnemyAccumulator = 0;
     let lightningBolts = [];
-
-    // Intervalo para pájaros.
     let birdSpawner;
 
-    // ============================ ENTIDADES DEL JUEGO ============================
-    // Protagonista: la nube blanca.
+    // =========================== ENTIDADES DEL JUEGO ============================
     let protagonista = {
       x: canvas.width / 2,
       y: canvas.height / 2,
       vx: PROTAGONISTA_SPEED,
       vy: 0,
       rainbow: false,
-      rainbowUntil: 0
+      rainbowUntil: 0,
+      bubble: false,
+      // Propiedades para el dash:
+      isDashing: false,
+      dashRemainingTime: 0,
+      dashVelX: 0,
+      dashVelY: 0
     };
-
-    // Arrays para enemigos y pájaros.
     let enemies = [];
     let birds = [];
-    // Arcoíris (se crea al tocar un pájaro, como antes).
     let rainbowEntity = null;
 
-    // ============================ FUNCIONES DE COLISIÓN PRECISA ============================
+    // =========================== FUNCIONES DE COLISIÓN ===========================
     function getProtagonistCircles(prot) {
       return [
         { x: prot.x - PROTAGONISTA_RADIUS, y: prot.y - PROTAGONISTA_RADIUS, r: PROTAGONISTA_RADIUS },
@@ -142,9 +184,7 @@
         const effectiveProtRadius = IS_MOBILE ? pc.r * MOBILE_COLLISION_MULTIPLIER : pc.r;
         for (let ec of enemyCircles) {
           let effectiveEnemyRadius = ec.r;
-          if (enemy.giant) {
-            effectiveEnemyRadius *= 0.5;
-          }
+          if (enemy.giant) effectiveEnemyRadius *= 0.5;
           if (Math.hypot(pc.x - ec.x, pc.y - ec.y) < effectiveProtRadius + effectiveEnemyRadius)
             return true;
         }
@@ -177,7 +217,7 @@
       return (diffX * diffX + diffY * diffY) < (circleRadius * circleRadius);
     }
 
-    // ============================ ELEMENTOS DE FONDO ============================
+    // =========================== ELEMENTOS DE FONDO ============================
     let backgroundClouds = [];
     let backgroundParticles = [];
     let backgroundLeaves = [];
@@ -212,14 +252,14 @@
     }
     initBackground();
 
-    // ============================ FUNCIONES DE GESTIÓN DEL JUEGO ============================
+    // =========================== GESTIÓN DEL JUEGO ============================
     function resetGame() {
       isGameOver = false;
-      isPaused = true;  // Al reiniciar, el juego arranca parado.
+      isPaused = true;
       gameStarted = false;
       inStorm = false;
       stormState = "none";
-      currentStormThreshold = 400; // Reinicia la primera tormenta a 400
+      currentStormThreshold = 400;
       giantCloudKills = 0;
       stormTransitionStart = null;
       stormEndingTransitionStart = null;
@@ -229,6 +269,11 @@
       protagonista.vy = 0;
       protagonista.rainbow = false;
       protagonista.rainbowUntil = 0;
+      protagonista.bubble = false;
+      protagonista.isDashing = false;
+      protagonista.dashRemainingTime = 0;
+      protagonista.dashVelX = 0;
+      protagonista.dashVelY = 0;
       score = 0;
       enemies = [];
       birds = [];
@@ -238,7 +283,7 @@
       lightningAccumulator = 0;
       giantEnemyAccumulator = 0;
       sunsetEffect = null;
-      smokeEffects = [];
+      evaporationParticles = [];
       lastTime = performance.now();
       clearInterval(birdSpawner);
       birdSpawner = setInterval(spawnBird, BIRD_SPAWN_INTERVAL);
@@ -288,13 +333,25 @@
       let vy = Math.sin(angle) * ENEMY_SPEED;
       enemies.push({ x: x, y: y, vx: vx, vy: vy, radius: giantRadius, giant: true });
     }
-    // Pájaros: si el estado de tormenta es "active" se forzará a gris; en cualquier otro caso se permite rojo con 10% de probabilidad.
+    // ======================= GESTIÓN DE LOS PÁJAROS =======================
+    // Se crean tres tipos: normal (50% → otorga burbuja), arcoíris (30% → produce efecto arcoíris) y rojo (20% → atardecer).
     function spawnBird() {
       const x = -30;
       const y = Math.random() * canvas.height;
       const BIRD_SPEED = 6;
-      const birdColor = (stormState === "active") ? "gray" : (Math.random() < 0.1 ? "red" : "gray");
-      birds.push({ x: x, y: y, vx: BIRD_SPEED, vy: 0, color: birdColor });
+      let r = Math.random();
+      let birdType, birdColor;
+      if (r < 0.5) {
+        birdType = "normal";
+        birdColor = "gray";
+      } else if (r < 0.8) {
+        birdType = "rainbow";
+        birdColor = "rainbow";
+      } else {
+        birdType = "red";
+        birdColor = "red";
+      }
+      birds.push({ x: x, y: y, vx: BIRD_SPEED, vy: 0, type: birdType, color: birdColor });
     }
     function updatePosition(obj, radius, dtFactor) {
       obj.x += obj.vx * dtFactor;
@@ -304,10 +361,26 @@
       if (obj.y < -radius) obj.y = canvas.height + radius;
       if (obj.y > canvas.height + radius) obj.y = -radius;
     }
+    // Actualiza la posición del protagonista considerando el dash (si está activo)
+    function updateProtagonistPosition(dt, dtFactor) {
+      if (protagonista.isDashing) {
+        protagonista.x += protagonista.dashVelX * dt;
+        protagonista.y += protagonista.dashVelY * dt;
+        protagonista.dashRemainingTime -= dt;
+        if (protagonista.dashRemainingTime <= 0) {
+          protagonista.isDashing = false;
+        }
+        if (protagonista.x < -PROTAGONISTA_RADIUS) protagonista.x = canvas.width + PROTAGONISTA_RADIUS;
+        if (protagonista.x > canvas.width + PROTAGONISTA_RADIUS) protagonista.x = -PROTAGONISTA_RADIUS;
+        if (protagonista.y < -PROTAGONISTA_RADIUS) protagonista.y = canvas.height + PROTAGONISTA_RADIUS;
+        if (protagonista.y > canvas.height + PROTAGONISTA_RADIUS) protagonista.y = -PROTAGONISTA_RADIUS;
+      } else {
+        updatePosition(protagonista, PROTAGONISTA_RADIUS, dtFactor);
+      }
+    }
 
-    // ============================ DIBUJO DEL FONDO Y ENTIDADES ============================
+    // =========================== DIBUJO ===========================
     function drawBackground(currentTime) {
-      // Dibujar elementos de fondo (nubes, partículas, hojas)
       backgroundClouds.forEach(cloud => {
         ctx.save();
         ctx.globalAlpha = 0.5;
@@ -342,7 +415,6 @@
         ctx.fill();
         ctx.restore();
       });
-      // Efecto atardecer: degradado y sol.
       if (sunsetEffect) {
         let elapsed = currentTime - sunsetEffect.startTime;
         let totalEffectTime = sunsetEffect.fadeInDuration + sunsetEffect.fullDuration + sunsetEffect.fadeOutDuration;
@@ -354,26 +426,22 @@
         } else if (elapsed < totalEffectTime) {
           alpha = 1 - ((elapsed - sunsetEffect.fadeInDuration - sunsetEffect.fullDuration) / sunsetEffect.fadeOutDuration);
         }
-        if (sunsetEffect) {
-          let grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
-          grad.addColorStop(0, "violet");
-          grad.addColorStop(1, "orange");
-          ctx.save();
-          ctx.globalAlpha = alpha;
-          ctx.fillStyle = grad;
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.restore();
-          // Dibujar el sol naranja.
-          ctx.save();
-          ctx.globalAlpha = alpha;
-          ctx.fillStyle = "orange";
-          ctx.beginPath();
-          ctx.arc(sunsetEffect.sunX, sunsetEffect.sunY, sunsetEffect.sunRadius, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.restore();
-        }
+        let grad = ctx.createLinearGradient(0, 0, 0, canvas.height);
+        grad.addColorStop(0, "violet");
+        grad.addColorStop(1, "orange");
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = grad;
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.restore();
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = "orange";
+        ctx.beginPath();
+        ctx.arc(sunsetEffect.sunX, sunsetEffect.sunY, sunsetEffect.sunRadius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
       }
-      // Transición de la tormenta (overlay oscuro)
       if (inStorm) {
         ctx.save();
         let overlayAlpha = 0;
@@ -384,18 +452,16 @@
           let endingProgress = Math.min((currentTime - stormEndingTransitionStart) / 5000, 1);
           overlayAlpha = (1 - endingProgress) * 0.3;
         }
-        ctx.fillStyle = "rgba(0, 0, 0, " + overlayAlpha + ")";
+        ctx.fillStyle = "rgba(0,0,0," + overlayAlpha + ")";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.restore();
       }
-      // Dibujar los rayos durante la tormenta.
       if (inStorm) {
         lightningBolts.forEach(bolt => {
           drawLightning(bolt);
         });
       }
-      // Dibujar efectos de humo (para nubes evaporadas)
-      drawSmokeEffects(currentTime);
+      drawEvaporationParticles(currentTime);
     }
     function updateBackground(dtFactor) {
       backgroundClouds.forEach(cloud => {
@@ -411,6 +477,63 @@
         leaf.angle += 0.01 * dtFactor;
         if (leaf.x > canvas.width + 10) leaf.x = -10;
       });
+    }
+    function drawCloud(x, y, radius, color) {
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, radius, Math.PI * 0.5, Math.PI * 1.5);
+      ctx.arc(x + radius, y - radius, radius, Math.PI, Math.PI * 2);
+      ctx.arc(x + radius * 2, y, radius, Math.PI * 1.5, Math.PI * 0.5);
+      ctx.arc(x + radius, y + radius, radius, 0, Math.PI);
+      ctx.closePath();
+      ctx.fill();
+    }
+    function drawBird(bird, currentTime) {
+      ctx.save();
+      ctx.translate(bird.x, bird.y);
+      if (bird.type === "rainbow") {
+        let gradient = ctx.createLinearGradient(-15, 0, 15, 0);
+        gradient.addColorStop(0, "red");
+        gradient.addColorStop(0.16, "orange");
+        gradient.addColorStop(0.33, "yellow");
+        gradient.addColorStop(0.5, "green");
+        gradient.addColorStop(0.66, "blue");
+        gradient.addColorStop(0.83, "indigo");
+        gradient.addColorStop(1, "violet");
+        ctx.fillStyle = gradient;
+      } else {
+        ctx.fillStyle = bird.color;
+      }
+      ctx.beginPath();
+      ctx.ellipse(0, 0, 15, 7, 0, 0, Math.PI * 2);
+      ctx.fill();
+      let wingOffset = Math.sin(currentTime / 200) * 5;
+      ctx.fillStyle = (bird.type === "red") ? "darkred" : "darkgray";
+      ctx.beginPath();
+      ctx.ellipse(-5, -7 + wingOffset, 8, 4, -0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(-5, 7 + wingOffset, 8, 4, 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
+    function drawRainbow(rainbow, currentTime) {
+      let progress = Math.min((currentTime - rainbow.spawnTime) / rainbow.fadeDuration, 1);
+      ctx.save();
+      ctx.globalAlpha = progress;
+      let centerX = rainbow.x + rainbow.width / 2;
+      let centerY = rainbow.y + rainbow.height / 2;
+      ctx.translate(centerX, centerY);
+      ctx.rotate(rainbow.angle);
+      let colors = ["red", "orange", "yellow", "green", "blue", "indigo", "violet"];
+      let bandHeight = rainbow.height / colors.length;
+      let startY = -rainbow.height / 2;
+      for (let i = 0; i < colors.length; i++) {
+        ctx.fillStyle = colors[i];
+        ctx.fillRect(-rainbow.width / 2, startY, rainbow.width, bandHeight);
+        startY += bandHeight;
+      }
+      ctx.restore();
     }
     function drawProtagonist(currentTime) {
       ctx.save();
@@ -435,7 +558,6 @@
         ctx.fillStyle = "white";
       }
       ctx.fill();
-      // Dibujar ojos y boca.
       let eyeRadius = radius * 0.15;
       let eyeOffsetX = radius * 0.5;
       let eyeOffsetY = radius * 0.3;
@@ -458,59 +580,24 @@
       ctx.strokeStyle = "black";
       ctx.lineWidth = 2;
       ctx.stroke();
-      // Si hay efecto atardecer, dibujar gafas de sol negras sobre la nube blanca.
       if (sunsetEffect) {
         ctx.save();
         ctx.fillStyle = "black";
-        // Dibujar gafas sobre ambos ojos (rectángulos)
         ctx.fillRect(x - eyeOffsetX - eyeRadius, y - eyeOffsetY - eyeRadius/2, eyeRadius*2, eyeRadius);
         ctx.fillRect(x + eyeOffsetX - eyeRadius, y - eyeOffsetY - eyeRadius/2, eyeRadius*2, eyeRadius);
         ctx.restore();
       }
-      ctx.restore();
-    }
-    function drawCloud(x, y, radius, color) {
-      ctx.fillStyle = color;
-      ctx.beginPath();
-      ctx.arc(x, y, radius, Math.PI * 0.5, Math.PI * 1.5);
-      ctx.arc(x + radius, y - radius, radius, Math.PI, Math.PI * 2);
-      ctx.arc(x + radius * 2, y, radius, Math.PI * 1.5, Math.PI * 0.5);
-      ctx.arc(x + radius, y + radius, radius, 0, Math.PI);
-      ctx.closePath();
-      ctx.fill();
-    }
-    function drawBird(bird, currentTime) {
-      ctx.save();
-      ctx.translate(bird.x, bird.y);
-      ctx.fillStyle = bird.color;
-      ctx.beginPath();
-      ctx.ellipse(0, 0, 15, 7, 0, 0, Math.PI * 2);
-      ctx.fill();
-      let wingOffset = Math.sin(currentTime / 200) * 5;
-      ctx.fillStyle = (bird.color === "red") ? "darkred" : "darkgray";
-      ctx.beginPath();
-      ctx.ellipse(-5, -7 + wingOffset, 8, 4, -0.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.beginPath();
-      ctx.ellipse(-5, 7 + wingOffset, 8, 4, 0.5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-    }
-    function drawRainbow(rainbow, currentTime) {
-      let progress = Math.min((currentTime - rainbow.spawnTime) / rainbow.fadeDuration, 1);
-      ctx.save();
-      ctx.globalAlpha = progress;
-      let centerX = rainbow.x + rainbow.width / 2;
-      let centerY = rainbow.y + rainbow.height / 2;
-      ctx.translate(centerX, centerY);
-      ctx.rotate(rainbow.angle);
-      let colors = ["red", "orange", "yellow", "green", "blue", "indigo", "violet"];
-      let bandHeight = rainbow.height / colors.length;
-      let startY = -rainbow.height / 2;
-      for (let i = 0; i < colors.length; i++) {
-        ctx.fillStyle = colors[i];
-        ctx.fillRect(-rainbow.width / 2, startY, rainbow.width, bandHeight);
-        startY += bandHeight;
+      // Dibujo de la burbuja: se eleva el centro restándole 10 píxeles al eje Y.
+      if (protagonista.bubble) {
+        ctx.save();
+        ctx.lineWidth = 4;
+        ctx.fillStyle = "rgba(173,216,230,0.2)";
+        ctx.strokeStyle = "rgba(173,216,230,0.6)";
+        ctx.beginPath();
+        ctx.arc(x, y - 10, PROTAGONISTA_RADIUS + BUBBLE_EXTRA_RADIUS, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        ctx.restore();
       }
       ctx.restore();
     }
@@ -573,30 +660,9 @@
       ctx.stroke();
       ctx.restore();
     }
-    // Función para dibujar efectos de humo (para nubes evaporadas)
-    function drawSmokeEffects(currentTime) {
-      for (let i = smokeEffects.length - 1; i >= 0; i--) {
-        let effect = smokeEffects[i];
-        let elapsed = currentTime - effect.startTime;
-        let duration = 1000; // Duración del humo: 1 s
-        if (elapsed > duration) {
-          smokeEffects.splice(i, 1);
-          continue;
-        }
-        let alpha = 1 - elapsed / duration;
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.fillStyle = "gray";
-        ctx.beginPath();
-        ctx.arc(effect.x, effect.y, effect.radius, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.restore();
-      }
-    }
 
-    // ============================ CONTROLES MOBILE Y DESKTOP ============================
-    window.addEventListener('keydown', function(e) {
-      // Si se pulsa alguna tecla de dirección y el juego aún no ha arrancado, iniciarlo.
+    // ================== CONTROLES: DASH (TECLADO Y TOUCH) ==================
+    document.addEventListener('keydown', function(e) {
       if (!gameStarted && (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight")) {
         gameStarted = true;
         isPaused = false;
@@ -606,23 +672,33 @@
         return;
       }
       if (!isPaused && !isGameOver) {
+        let direction = null;
         switch(e.key) {
-          case 'ArrowUp':
-            protagonista.vx = 0;
-            protagonista.vy = -PROTAGONISTA_SPEED;
-            break;
-          case 'ArrowDown':
-            protagonista.vx = 0;
-            protagonista.vy = PROTAGONISTA_SPEED;
-            break;
-          case 'ArrowLeft':
-            protagonista.vx = -PROTAGONISTA_SPEED;
-            protagonista.vy = 0;
-            break;
-          case 'ArrowRight':
-            protagonista.vx = PROTAGONISTA_SPEED;
-            protagonista.vy = 0;
-            break;
+          case 'ArrowUp': direction = { x: 0, y: -1 }; break;
+          case 'ArrowDown': direction = { x: 0, y: 1 }; break;
+          case 'ArrowLeft': direction = { x: -1, y: 0 }; break;
+          case 'ArrowRight': direction = { x: 1, y: 0 }; break;
+        }
+        if (direction) {
+          let now = performance.now();
+          if (lastInputDirection &&
+              lastInputDirection.x === direction.x &&
+              lastInputDirection.y === direction.y &&
+              (now - lastInputTime) < DASH_THRESHOLD &&
+              !protagonista.isDashing) {
+            // Activar dash
+            protagonista.isDashing = true;
+            protagonista.dashRemainingTime = DASH_DURATION;
+            const dashVelocity = DASH_DISTANCE / DASH_DURATION; // px por ms
+            protagonista.dashVelX = direction.x * dashVelocity;
+            protagonista.dashVelY = direction.y * dashVelocity;
+          } else {
+            // Movimiento normal
+            protagonista.vx = direction.x * PROTAGONISTA_SPEED;
+            protagonista.vy = direction.y * PROTAGONISTA_SPEED;
+          }
+          lastInputDirection = direction;
+          lastInputTime = now;
         }
       }
     });
@@ -658,27 +734,34 @@
         }
         return;
       }
+      let direction = null;
       if (Math.abs(deltaX) > Math.abs(deltaY)) {
-        if (deltaX > 0) {
-          protagonista.vx = PROTAGONISTA_SPEED;
-          protagonista.vy = 0;
-        } else {
-          protagonista.vx = -PROTAGONISTA_SPEED;
-          protagonista.vy = 0;
-        }
+        direction = (deltaX > 0) ? { x: 1, y: 0 } : { x: -1, y: 0 };
       } else {
-        if (deltaY > 0) {
-          protagonista.vx = 0;
-          protagonista.vy = PROTAGONISTA_SPEED;
+        direction = (deltaY > 0) ? { x: 0, y: 1 } : { x: 0, y: -1 };
+      }
+      if (direction) {
+        let now = performance.now();
+        if (lastInputDirection &&
+            lastInputDirection.x === direction.x &&
+            lastInputDirection.y === direction.y &&
+            (now - lastInputTime) < DASH_THRESHOLD &&
+            !protagonista.isDashing) {
+          protagonista.isDashing = true;
+          protagonista.dashRemainingTime = DASH_DURATION;
+          const dashVelocity = DASH_DISTANCE / DASH_DURATION;
+          protagonista.dashVelX = direction.x * dashVelocity;
+          protagonista.dashVelY = direction.y * dashVelocity;
         } else {
-          protagonista.vx = 0;
-          protagonista.vy = -PROTAGONISTA_SPEED;
+          protagonista.vx = direction.x * PROTAGONISTA_SPEED;
+          protagonista.vy = direction.y * PROTAGONISTA_SPEED;
         }
+        lastInputDirection = direction;
+        lastInputTime = now;
       }
     }, false);
     canvas.addEventListener('click', function(e) {
       if (!IS_MOBILE) {
-        // En desktop, si el juego aún no ha arrancado, iniciarlo.
         if (!gameStarted) {
           gameStarted = true;
           isPaused = false;
@@ -688,7 +771,7 @@
       }
     });
 
-    // ============================ GESTIÓN DE PAUSA Y REINICIO ============================
+    // =========================== PAUSA Y REINICIO ===========================
     function togglePause() {
       if (isGameOver) {
         resetGame();
@@ -696,20 +779,19 @@
         isPaused = !isPaused;
       }
     }
-    // Inicia la fase de finalización de la tormenta.
     function beginStormEnding(currentTime) {
       if (stormState !== "ending") {
         stormState = "ending";
         stormEndingTransitionStart = currentTime;
       }
     }
-    // ============================ BUCLE PRINCIPAL DEL JUEGO ============================
+
+    // =========================== BUCLE PRINCIPAL DEL JUEGO ===========================
     function gameLoop(currentTime) {
       let dt = currentTime - lastTime;
       let dtFactor = dt / 16.67;
       lastTime = currentTime;
       
-      // Si el juego aún no ha arrancado, solo dibujar la escena inicial.
       if (!gameStarted) {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         drawBackground(currentTime);
@@ -719,7 +801,6 @@
         return;
       }
       
-      // Actualizar y eliminar el efecto atardecer si ya pasó su tiempo
       if (sunsetEffect) {
         let elapsed = currentTime - sunsetEffect.startTime;
         let totalEffectTime = sunsetEffect.fadeInDuration + sunsetEffect.fullDuration + sunsetEffect.fadeOutDuration;
@@ -727,24 +808,25 @@
           sunsetEffect = null;
         }
       }
-      
-      // Comprobar colisión entre la nube blanca y el sol (durante el atardecer)
+      // Al colisionar con el sol durante el atardecer, eliminar (evaporar) todas las nubes.
       if (sunsetEffect) {
         let dx = protagonista.x - sunsetEffect.sunX;
         let dy = protagonista.y - sunsetEffect.sunY;
         if (Math.hypot(dx, dy) < PROTAGONISTA_RADIUS + sunsetEffect.sunRadius) {
-          // Agregar efecto de humo para cada nube negra y luego eliminarlas
-          enemies.forEach(enemy => {
-            smokeEffects.push({ x: enemy.x, y: enemy.y, radius: enemy.radius, startTime: currentTime });
-          });
-          enemies = [];
+          if (!sunsetEffect.triggered) {
+            while(enemies.length > 0) {
+              let enemy = enemies.shift();
+              spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
+            }
+            sunsetEffect.triggered = true;
+          }
         }
       }
       
       if (!isPaused && !isGameOver) {
         score += dtFactor * 0.1;
         updateBackground(dtFactor);
-        updatePosition(protagonista, PROTAGONISTA_RADIUS, dtFactor);
+        updateProtagonistPosition(dt, dtFactor);
         if (protagonista.rainbow && currentTime > protagonista.rainbowUntil) {
           protagonista.rainbow = false;
         }
@@ -759,17 +841,14 @@
             birds.splice(i, 1);
           }
         }
-        // Ajuste en la frecuencia de aparición de nubes negras:
-        let enemyInterval = Math.max(1000, BASE_ENEMY_INTERVAL - Math.floor(score / 100) * 1000);
-        if (currentStormThreshold === 800) {
-          enemyInterval *= 0.8;
-        }
+        let enemyInterval = (BASE_ENEMY_INTERVAL * ENEMY_SPAWN_INTERVAL_FACTOR)
+                            - Math.floor(score / 100) * 1000;
+        enemyInterval = Math.max(200, enemyInterval);
         enemySpawnAccumulator += dt;
         if (enemySpawnAccumulator >= enemyInterval) {
           spawnEnemy();
           enemySpawnAccumulator -= enemyInterval;
         }
-        // Activar tormenta: si score supera el umbral y no hay tormenta activa.
         if (score >= currentStormThreshold && !inStorm && stormState === "none") {
           inStorm = true;
           stormState = "active";
@@ -779,7 +858,6 @@
             spawnGiantEnemy();
           }
         }
-        // Durante la tormenta:
         if (inStorm) {
           lightningAccumulator += dt;
           if (lightningAccumulator >= LIGHTNING_INTERVAL) {
@@ -797,26 +875,12 @@
         }
       }
       
-      // Si se está en fase de finalización de la tormenta y han pasado 5 s, finalizarla.
-      if (stormState === "ending") {
-        if ((currentTime - stormEndingTransitionStart) >= 5000) {
-          inStorm = false;
-          stormState = "none";
-          giantCloudKills = 0;
-          lightningBolts = [];
-          lightningAccumulator = 0;
-          giantEnemyAccumulator = 0;
-          stormTransitionStart = null;
-          stormEndingTransitionStart = null;
-          currentStormThreshold = 800; // La siguiente tormenta se activará al alcanzar 800 puntos.
-        }
-      }
-      
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       drawBackground(currentTime);
       drawProtagonist(currentTime);
       
-      // Procesar colisiones con enemigos (nubes negras o gigantes)
+      // Procesar colisiones con nubes negras: si la nube blanca (con poder) colisiona,
+      // se elimina la nube usando el mismo efecto de evaporación.
       for (let i = enemies.length - 1; i >= 0; i--) {
         let enemy = enemies[i];
         drawCloud(enemy.x - enemy.radius, enemy.y - enemy.radius, enemy.radius, "black");
@@ -824,55 +888,63 @@
           drawAngryFace(enemy.x, enemy.y, enemy.radius);
         }
         if (!isPaused && !isGameOver && isPreciseCloudCollision(protagonista, enemy)) {
-          if (protagonista.rainbow) {
+          if (protagonista.rainbow || protagonista.bubble) {
+            spawnEvaporationEffect(enemy.x, enemy.y, enemy.radius);
             if (enemy.giant) {
-              enemies.splice(i, 1);
               giantCloudKills++;
               let requiredKills = (currentStormThreshold === 800) ? 6 : 3;
               if (giantCloudKills >= requiredKills) {
                 beginStormEnding(currentTime);
               }
-            } else {
-              enemies.splice(i, 1);
             }
+            if (protagonista.bubble) {
+              protagonista.bubble = false;
+            }
+            enemies.splice(i, 1);
           } else {
             isGameOver = true;
           }
         }
       }
       
-      // Procesar colisiones con pájaros: si es rojo activa atardecer, de lo contrario genera arcoíris.
       for (let i = birds.length - 1; i >= 0; i--) {
         let bird = birds[i];
         drawBird(bird, currentTime);
         if (!isPaused && !isGameOver && isPreciseBirdCollision(protagonista, bird)) {
           birds.splice(i, 1);
-          if (bird.color === "red") {
-            sunsetEffect = {
-              startTime: currentTime,
-              fadeInDuration: 2000,
-              fullDuration: 5000,
-              fadeOutDuration: 2000,
-              sunX: Math.random() * canvas.width,
-              sunY: Math.random() * canvas.height,
-              sunRadius: 50
-            };
-          } else {
-            rainbowEntity = {
-              spawnTime: currentTime,
-              fadeDuration: RAINBOW_FADE_DURATION,
-              duration: RAINBOW_DURATION,
-              x: -canvas.width / 2,
-              y: Math.random() * (canvas.height - 100),
-              width: canvas.width * 2,
-              height: 100,
-              angle: Math.random() * Math.PI * 2
-            };
+          switch(bird.type) {
+            case "red":
+              sunsetEffect = {
+                startTime: currentTime,
+                fadeInDuration: 2000,
+                fullDuration: 5000,
+                fadeOutDuration: 2000,
+                sunX: Math.random() * canvas.width,
+                sunY: Math.random() * canvas.height,
+                sunRadius: 50,
+                triggered: false
+              };
+              break;
+            case "rainbow":
+              rainbowEntity = {
+                spawnTime: currentTime,
+                fadeDuration: RAINBOW_FADE_DURATION,
+                duration: RAINBOW_DURATION,
+                x: -canvas.width / 2,
+                y: Math.random() * (canvas.height - 100),
+                width: canvas.width * 2,
+                height: 100,
+                angle: Math.random() * Math.PI * 2
+              };
+              break;
+            case "normal":
+            default:
+              protagonista.bubble = true;
+              break;
           }
         }
       }
       
-      // Procesar arcoíris: otorgar poder si se colisiona.
       if (rainbowEntity) {
         if (currentTime - rainbowEntity.spawnTime > rainbowEntity.duration) {
           rainbowEntity = null;
@@ -902,7 +974,6 @@
       }
       requestAnimationFrame(gameLoop);
     }
-    // Iniciar el juego.
     spawnEnemy();
     birdSpawner = setInterval(spawnBird, BIRD_SPAWN_INTERVAL);
     requestAnimationFrame(gameLoop);
